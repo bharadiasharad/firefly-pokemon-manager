@@ -4,7 +4,7 @@ import User from "./User";
 
 /**
  * Favorite Model
- * Represents the favorite Pokémon saved by users.
+ * Represents the favorite Pokemon saved by users.
  */
 class Favorite extends Model {
   /**
@@ -13,12 +13,12 @@ class Favorite extends Model {
   public id!: number;
 
   /**
-   * The ID of the user who favorited the Pokémon.
+   * The ID of the user who favorited the Pokemon.
    */
   public userId!: number;
 
   /**
-   * The ID of the Pokémon marked as a favorite.
+   * The ID of the Pokemon marked as a favorite.
    */
   public pokemonId!: number;
 }
@@ -53,13 +53,13 @@ Favorite.init(
 
 /**
  * Establishes a one-to-many relationship between User and Favorite.
- * A user can have multiple favorite Pokémon.
+ * A user can have multiple favorite Pokemon.
  */
 User.hasMany(Favorite, { foreignKey: "userId" });
 
 /**
  * Establishes a many-to-one relationship between Favorite and User.
- * Each favorite Pokémon belongs to a single user.
+ * Each favorite Pokemon belongs to a single user.
  */
 Favorite.belongsTo(User, { foreignKey: "userId" });
 

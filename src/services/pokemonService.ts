@@ -1,73 +1,211 @@
 import axios from "axios";
+import NodeCache from "node-cache";
 import { POKEAPI_URL } from "../config/consts";
 import Favorite from "../models/Favorite";
 import { Pokemon, PokemonDetails } from "../types/Pokemon";
+import { Move } from "Move";
+import { Ability } from "Ability";
+
+// Initialize cache with a 100-minute TTL (time-to-live) for caching API results
+const cache = new NodeCache({ stdTTL: 6000, checkperiod: 600 });
 
 /**
- * Fetches a list of Pokémon from the PokéAPI.
- * @param offset - The number of Pokémon to skip before fetching.
- * @param limit - The number of Pokémon to fetch.
- * @returns A promise resolving to an array of Pokémon objects.
+ * Helper function to fetch and cache data from an external API.
+ * @param url - The API URL to fetch data from.
+ * @param cacheKey - The cache key for storing/retrieving data.
+ * @param transform - A function to transform the data before caching.
+ * @returns A promise resolving to the cached or fetched data.
+ */
+const fetchDataAndCache = async <T>(
+  url: string,
+  cacheKey: string,
+  transform: (data: any) => T
+): Promise<T> => {
+  // Check if data is already cached
+  const cachedData = cache.get<T>(cacheKey);
+  if (cachedData) {
+    console.log(`Returning cached data for ${cacheKey}`);
+    return cachedData;
+  }
+
+  try {
+    const response = await axios.get(url);
+    const transformedData = transform(response.data);
+    cache.set(cacheKey, transformedData);
+    return transformedData;
+  } catch (error) {
+    console.error(`Error fetching data from ${url}:`, error);
+    throw new Error(`Failed to fetch data from ${url}`);
+  }
+};
+
+/**
+ * Fetches a list of Pokemon from the PokeAPI.
+ * @param offset - The number of Pokemon to skip before fetching.
+ * @param limit - The number of Pokemon to fetch.
+ * @returns A promise resolving to an array of Pokemon objects.
  */
 export const getPokemonList = async (offset: number, limit: number): Promise<Pokemon[]> => {
-    const response = await axios.get(`${POKEAPI_URL}/pokemon`, {
-      params: { offset, limit },
-    });
-  
-    // Extract Pokémon data and assign an ID based on the URL
-    const pokemonList = response.data.results.map((pokemon: any) => {
-      const id = parseInt(pokemon.url.split("/").filter(Boolean).pop());
-      return {
-        ...pokemon,
-        id,
-      };
-    });
-  
-    return pokemonList;
+  const cacheKey = `pokemonList-${offset}-${limit}`;
+  return fetchDataAndCache<Pokemon[]>(
+    `${POKEAPI_URL}/pokemon?offset=${offset}&limit=${limit}`,
+    cacheKey,
+    (data) => data.results.map((pokemon: Pokemon) => ({
+      ...pokemon,
+      id: parseInt(pokemon.url.split("/").filter(Boolean).pop()),
+      thumbnail: `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${pokemon.id}.png`
+    }))
+  );
 };
 
 /**
- * Fetches detailed information about a specific Pokémon.
- * @param id - The ID of the Pokémon to retrieve details for.
- * @returns A promise resolving to a Pokémon details object.
+ * Fetches detailed information about a specific Pokemon.
+ * @param pokeName - The name of the Pokemon to retrieve details for.
+ * @returns A promise resolving to a Pokemon details object.
  */
-export const getPokemonDetails = async (id: string): Promise<PokemonDetails> => {
-  const response = await axios.get(`${POKEAPI_URL}/pokemon/${id}`);
-  const { abilities, types, height, weight, base_experience, stats, moves } = response.data;
-  return { abilities, types, height, weight, base_experience, stats, moves };
+export const getPokemonDetails = async (pokeName: string): Promise<PokemonDetails> => {
+  const cacheKey = pokeName;
+  return fetchDataAndCache<PokemonDetails>(
+    `${POKEAPI_URL}/pokemon/${pokeName}`,
+    cacheKey,
+    (data) => ({
+      abilities: data.abilities,
+      types: data.types,
+      height: data.height,
+      weight: data.weight,
+      base_experience: data.base_experience,
+      stats: data.stats,
+      moves: data.moves,
+      name: data.name,
+      id: data.id
+    })
+  );
 };
 
 /**
- * Adds a Pokémon to the user's list of favorites.
- * @param userId - The ID of the user adding the favorite.
- * @param pokemonId - The ID of the Pokémon to add as a favorite.
- * @returns A promise resolving to an array of the user's favorite Pokémon.
+ * Fetches the list of all Pokémon and caches it for a day.
+ * @returns A promise resolving to an array of all Pokémon.
  */
-export const addFavorite = async (userId: number, pokemonId: number): Promise<Favorite[]> => {
-  await Favorite.create({ userId, pokemonId }); // Add the favorite to the database
-  return Favorite.findAll({ where: { userId } }); // Return updated list of favorites
+const getAllPokemonList = async (): Promise<Pokemon[]> => {
+  return fetchDataAndCache<Pokemon[]>(
+    "https://pokeapi.co/api/v2/pokemon?limit=10000",
+    "pokemonList",
+    (data) => data.results.map((pokemon: Pokemon) => ({
+      ...pokemon,
+      id: parseInt(pokemon.url.split("/").filter(Boolean).pop()),
+      thumbnail: `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${pokemon.id}.png`
+    }))
+  );
 };
 
 /**
- * Removes a Pokémon from the user's list of favorites.
- * @param userId - The ID of the user removing the favorite.
- * @param pokemonId - The ID of the Pokémon to remove.
- * @returns A promise resolving to an array of the user's remaining favorite Pokémon.
+ * Adds multiple Pokémon to the user's list of favorites.
+ * @param userId - The ID of the user adding the favorites.
+ * @param pokemonIds - An array of IDs of the Pokémon to add as favorites.
+ * @returns A promise resolving to an object containing an array of the user's favorite Pokémon details.
  */
-export const removeFavorite = async (userId: number, pokemonId: number): Promise<Favorite[]> => {
-  await Favorite.destroy({ where: { userId, pokemonId } }); // Remove the favorite from the database
-  return Favorite.findAll({ where: { userId } }); // Return updated list of favorites
-};
-
-/**
- * Retrieves a list of favorite Pokémon IDs for a given user.
- * @param userId - The ID of the user whose favorites should be retrieved.
- * @returns A promise resolving to an array of Pokémon IDs.
- */
-export const listFavorites = async (userId: number): Promise<number[]> => {
-    const favorites = await Favorite.findAll({
+export const addFavorite = async (userId: number, pokemonIds: number[]): Promise<{ favoritePokemon: Pokemon[] }> => {
+  try {
+    const existingFavorites = await Favorite.findAll({
       where: { userId },
-      attributes: ["pokemonId"], // Only select the pokemonId field
+      attributes: ["pokemonId"]
     });
-    return favorites.map(favorite => favorite.pokemonId); // Extract and return the list of Pokémon IDs
+
+    const existingPokemonIds = new Set(existingFavorites.map(favorite => favorite.pokemonId));
+    const newPokemonIds = pokemonIds.filter(pokemonId => !existingPokemonIds.has(pokemonId));
+
+    if (newPokemonIds.length > 0) {
+      await Favorite.bulkCreate(newPokemonIds.map(pokemonId => ({ userId, pokemonId })));
+    }
+
+    const favoritePokemonIds = await Favorite.findAll({
+      where: { userId },
+      attributes: ["pokemonId"]
+    }).then(favorites => favorites.map(favorite => favorite.pokemonId));
+
+    cache.set(`userFavorites_${userId}`, favoritePokemonIds);
+
+    const allPokemon = await getAllPokemonList();
+    const favoritePokemon = allPokemon.filter(pokemon => favoritePokemonIds.includes(pokemon.id));
+
+    return { favoritePokemon };
+  } catch (error) {
+    console.error("Error adding favorite:", error);
+    throw new Error("Failed to add favorite Pokémon");
+  }
+};
+
+/**
+ * Removes a Pokemon from the user's list of favorites.
+ * @param userId - The ID of the user removing the favorite.
+ * @param pokemonId - The ID of the Pokemon to remove.
+ * @returns A promise resolving to an array of the user's remaining favorite Pokemon.
+ */
+export const removeFavorite = async (userId: number, pokemonId: number): Promise<{ favoritePokemon: Pokemon[] }> => {
+  try {
+    await Favorite.destroy({ where: { userId, pokemonId } });
+
+    const favoritePokemonIds = await Favorite.findAll({
+      where: { userId },
+      attributes: ["pokemonId"]
+    }).then(favorites => favorites.map(favorite => favorite.pokemonId));
+
+    const allPokemon = await getAllPokemonList();
+    const favoritePokemon = allPokemon.filter(pokemon => favoritePokemonIds.includes(pokemon.id));
+
+    return { favoritePokemon };
+  } catch (error) {
+    console.error("Error removing favorite:", error);
+    throw new Error("Failed to remove favorite Pokemon");
+  }
+};
+
+/**
+ * Retrieves a list of favorite Pokémon details for a given user.
+ * @param userId - The ID of the user whose favorites should be retrieved.
+ * @returns A promise resolving to an object containing an array of the user's favorite Pokémon details.
+ */
+export const listFavorites = async (userId: number): Promise<{ favoritePokemon: Pokemon[] }> => {
+  try {
+    const favoritePokemonIds = await Favorite.findAll({
+      where: { userId },
+      attributes: ["pokemonId"]
+    }).then(favorites => favorites.map(favorite => favorite.pokemonId));
+
+    const allPokemon = await getAllPokemonList();
+    const favoritePokemon = allPokemon.filter(pokemon => favoritePokemonIds.includes(pokemon.id));
+
+    return { favoritePokemon };
+  } catch (error) {
+    console.error("Error fetching favorites list:", error);
+    throw new Error("Failed to fetch favorite Pokémon list");
+  }
+};
+
+/**
+ * Fetches details for a specific move from the PokeAPI.
+ * @param moveName - The name of the move.
+ * @returns A promise resolving to move details.
+ */
+export const getMoveDetails = async (moveName: string): Promise<Move> => {
+  const cacheKey = moveName;
+  return fetchDataAndCache<Move>(
+    `https://pokeapi.co/api/v2/move/${moveName}`,
+    cacheKey,
+    (data) => data
+  );
+};
+
+/**
+ * Fetches details for a specific ability from the PokeAPI.
+ * @param abilityName - The name of the ability.
+ * @returns A promise resolving to ability details.
+ */
+export const getAbilityDetails = async (abilityName: string): Promise<Ability> => {
+  const cacheKey = abilityName;
+  return fetchDataAndCache<Ability>(
+    `https://pokeapi.co/api/v2/ability/${abilityName}`,
+    cacheKey,
+    (data) => data
+  );
 };
