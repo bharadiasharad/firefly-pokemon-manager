@@ -118,11 +118,11 @@ export default pokemonRouter;
  *     tags: [Pokemon]
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: name
  *         schema:
- *           type: integer
+ *           type: string
  *         required: true
- *         description: ID of the Pokemon
+ *         description: name of the Pokemon
  *     responses:
  *       "200":
  *         description: OK
